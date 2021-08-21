@@ -1,0 +1,83 @@
+#!/usr/bin/env perl
+use Applify;
+
+use List::Util    ();
+use Term::ReadKey ();
+
+option bool => total    => 'Print total as well', 0;
+option int  => max      => 'Max expected value',  0;
+option str  => bar_char => 'Bar character',       '∎';
+
+documentation __FILE__;
+version 'App::achart';
+
+sub detect {
+  my $self = shift;
+  return 0 unless my %stats = $self->parse_line(shift);
+
+  unless ($self->max) {
+    $self->{max}
+      = $self->total ? 1.5 * List::Util::sum(values %stats) : 2 * List::Util::max(values %stats);
+  }
+
+  @$self{qw(width height)} = Term::ReadKey::GetTerminalSize($self->{out});
+  $self->{height} ||= $ENV{ROWS}    || 40;
+  $self->{width}  ||= $ENV{COLUMNS} || 80;
+
+  return ($self->{detected} = 1);
+}
+
+sub parse_line {
+  my ($self, $line) = @_;
+  return ('' => $1) if $line =~ m!^\W*(\d\.?\d*)!;
+
+  my %stats;
+  $stats{$1} = $2 while $line =~ m!([A-Za-z])\W*(\d\.?\d*)!g;
+  return %stats;
+}
+
+sub print_stats {
+  my ($self, $line) = @_;
+  return if !$self->{detected} and !$self->detect($line);
+  return unless my %stats = $self->parse_line($line);
+
+  $stats{total} = List::Util::sum(values %stats) if $self->total;
+
+  my %len = (label => 0, value => 0);
+  for my $label (keys %stats) {
+    my $l = length $label;
+    $len{label} = $l if $l > $len{label};
+
+    $l = length $stats{$label};
+    $len{value} = $l if $l > $len{value};
+
+    if ($stats{$label} > $self->max) {
+      $self->{max} = int $stats{$label} * 1.5;
+      warn "! Adjusting max to $self->{max}\n";
+    }
+  }
+
+  my $l = length $self->max;
+  $len{value} = $l if $l > $len{value};
+
+  my $width         = $self->{width} - $len{label} - $len{value} - 6;
+  my @sorted_labels = grep { !$self->total || $_ ne 'total' } sort keys %stats;
+  push @sorted_labels, 'total' if $self->total;
+  for my $label (@sorted_labels) {
+    my $bar_len = int($width * $stats{$label} / $self->max);
+    $bar_len = $width if $width < $bar_len;
+
+    # "10+1       2+1 21                   13           "
+    # "some_label  42 ∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎             "
+    printf {$self->{out}} "%-$len{label}s %$len{value}s %s%s\n", $label, $stats{$label},
+      ($self->bar_char x $bar_len),
+      (' ' x ($self->{width} - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
+  }
+}
+
+app {
+  my ($self) = @_;
+  $self->{out} = \*STDOUT;
+  $self->print_stats($_) while <>;
+  return 0;
+};
