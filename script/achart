@@ -3,21 +3,23 @@ use Applify;
 
 use List::Util    ();
 use Term::ReadKey ();
+use Time::HiRes qw(sleep);
 
 option bool => total    => 'Print total as well', 0;
-option int  => max      => 'Max expected value',  0;
-option str  => bar_char => 'Bar character',       '∎';
+option str  => program  => 'Run a program that print stats to STDOUT';
+option int  => interval => 'Run the program every $interval seconds', 1;
+option int  => max      => 'Max expected value',                      0;
+option str  => bar_char => 'Bar character',                           '∎';
 
 documentation __FILE__;
 version 'App::achart';
 
 sub detect {
-  my $self = shift;
-  return 0 unless my %stats = $self->parse_line(shift);
+  my ($self, $stats) = @_;
 
   unless ($self->max) {
     $self->{max}
-      = $self->total ? 1.5 * List::Util::sum(values %stats) : 2 * List::Util::max(values %stats);
+      = $self->total ? 1.5 * List::Util::sum(values %$stats) : 2 * List::Util::max(values %$stats);
   }
 
   @$self{qw(width height)} = Term::ReadKey::GetTerminalSize($self->{out});
@@ -27,32 +29,22 @@ sub detect {
   return ($self->{detected} = 1);
 }
 
-sub parse_line {
-  my ($self, $line) = @_;
-  return ('' => $1) if $line =~ m!^\W*(\d\.?\d*)!;
-
-  my %stats;
-  $stats{$1} = $2 while $line =~ m!([A-Za-z])\W*(\d\.?\d*)!g;
-  return %stats;
-}
-
 sub print_stats {
-  my ($self, $line) = @_;
-  return if !$self->{detected} and !$self->detect($line);
-  return unless my %stats = $self->parse_line($line);
+  my ($self, $stats) = @_;
+  return if !$self->{detected} and !$self->detect($stats);
 
-  $stats{total} = List::Util::sum(values %stats) if $self->total;
+  $stats->{total} = List::Util::sum(values %$stats) if $self->total;
 
   my %len = (label => 0, value => 0);
-  for my $label (keys %stats) {
+  for my $label (keys %$stats) {
     my $l = length $label;
     $len{label} = $l if $l > $len{label};
 
-    $l = length $stats{$label};
+    $l = length $stats->{$label};
     $len{value} = $l if $l > $len{value};
 
-    if ($stats{$label} > $self->max) {
-      $self->{max} = int $stats{$label} * 1.5;
+    if ($stats->{$label} > $self->max) {
+      $self->{max} = int $stats->{$label} * 1.5;
       warn "! Adjusting max to $self->{max}\n";
     }
   }
@@ -61,23 +53,56 @@ sub print_stats {
   $len{value} = $l if $l > $len{value};
 
   my $width         = $self->{width} - $len{label} - $len{value} - 6;
-  my @sorted_labels = grep { !$self->total || $_ ne 'total' } sort keys %stats;
+  my @sorted_labels = grep { !$self->total || $_ ne 'total' } sort keys %$stats;
   push @sorted_labels, 'total' if $self->total;
   for my $label (@sorted_labels) {
-    my $bar_len = int($width * $stats{$label} / $self->max);
+    my $bar_len = int($width * $stats->{$label} / $self->max);
     $bar_len = $width if $width < $bar_len;
 
     # "10+1       2+1 21                   13           "
     # "some_label  42 ∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎             "
-    printf {$self->{out}} "%-$len{label}s %$len{value}s %s%s\n", $label, $stats{$label},
+    printf {$self->{out}} "%-$len{label}s %$len{value}s %s%s\n", $label, $stats->{$label},
       ($self->bar_char x $bar_len),
       (' ' x ($self->{width} - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
   }
+
+  print "\n" if @sorted_labels > 1;
+}
+
+sub read_from_program {
+  my $self = shift;
+
+  while (1) {
+    my %stats;
+    open my $PRG, '-|', $self->program or die qq(Can't run "@{[$self->program]}": $!\n);
+    $self->text_to_stats($_, \%stats) while <$PRG>;
+    $self->print_stats(\%stats) if %stats;
+    sleep($self->interval);
+  }
+}
+
+sub read_from_stdin {
+  my ($self, $line) = @_;
+  $self->text_to_stats($line, \my %stats);
+  $self->print_stats(\%stats) if %stats;
+}
+
+sub text_to_stats {
+  my ($self, $line, $stats) = @_;
+  $stats->{$1} = $2 while m!([A-Za-z_-]+)\W*(\d\.?\d*)!g;
+  $stats->{''} = $1 if !%$stats and m!^\W*(\d\.?\d*)!;
 }
 
 app {
   my ($self) = @_;
   $self->{out} = \*STDOUT;
-  $self->print_stats($_) while <>;
+
+  if ($self->program) {
+    $self->read_from_program;
+  }
+  else {
+    $self->read_from_stdin($_) while <>;
+  }
+
   return 0;
 };
