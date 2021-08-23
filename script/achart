@@ -1,9 +1,12 @@
 #!/usr/bin/env perl
 use Applify;
 
-use List::Util    ();
+use List::Util ();
+use Term::ANSIColor qw(colored);
 use Term::ReadKey ();
 use Time::HiRes qw(sleep);
+
+$ENV{ACHART_COLORS} = 'green,yellow,magenta,cyan,red';
 
 option bool => total    => 'Print total as well', 0;
 option str  => program  => 'Run a program that print stats to STDOUT';
@@ -14,6 +17,17 @@ option str  => bar_char => 'Bar character',                           '∎';
 documentation __FILE__;
 version 'App::achart';
 
+# Attributes
+sub colors {
+  $_[0]->{colors} //= [map { [split /-/, uc] } split /[,\s]+/, $ENV{ACHART_COLORS}];
+}
+
+sub n_colors { $_[0]->{n_colors} //= @{$_[0]->colors} }
+sub out_fh   { $_[0]->{out_fh}   //= \*STDOUT }
+sub height   { $_[0]->{height} ||= $ENV{ROWS}    || 40 }
+sub width    { $_[0]->{width}  ||= $ENV{COLUMNS} || 80 }
+
+# Methods
 sub detect {
   my ($self, $stats) = @_;
 
@@ -21,10 +35,6 @@ sub detect {
     $self->{max}
       = $self->total ? 1.5 * List::Util::sum(values %$stats) : 2 * List::Util::max(values %$stats);
   }
-
-  @$self{qw(width height)} = Term::ReadKey::GetTerminalSize($self->{out});
-  $self->{height} ||= $ENV{ROWS}    || 40;
-  $self->{width}  ||= $ENV{COLUMNS} || 80;
 
   return ($self->{detected} = 1);
 }
@@ -52,8 +62,10 @@ sub print_stats {
   my $l = length $self->max;
   $len{value} = $l if $l > $len{value};
 
-  my $width         = $self->{width} - $len{label} - $len{value} - 6;
+  my $width         = $self->width - $len{label} - $len{value} - 6;
   my @sorted_labels = grep { !$self->total || $_ ne 'total' } sort keys %$stats;
+  my $n_colors      = @{$self->colors};
+  my $n_lines       = 0;
   push @sorted_labels, 'total' if $self->total;
   for my $label (@sorted_labels) {
     my $bar_len = int($width * $stats->{$label} / $self->max);
@@ -61,12 +73,13 @@ sub print_stats {
 
     # "10+1       2+1 21                   13           "
     # "some_label  42 ∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎             "
-    printf {$self->{out}} "%-$len{label}s %$len{value}s %s%s\n", $label, $stats->{$label},
+    my $line = sprintf "%-$len{label}s %$len{value}s %s%s", $label, $stats->{$label},
       ($self->bar_char x $bar_len),
-      (' ' x ($self->{width} - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
-  }
+      (' ' x ($self->width - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
 
-  print "\n" if @sorted_labels > 1;
+    my $color = $self->colors->[$n_lines++ % $self->n_colors];
+    print {$self->out_fh} colored("$line", @$color), "\n";
+  }
 }
 
 sub read_from_program {
@@ -95,7 +108,7 @@ sub text_to_stats {
 
 app {
   my ($self) = @_;
-  $self->{out} = \*STDOUT;
+  @$self{qw(width height)} = Term::ReadKey::GetTerminalSize($self->out_fh);
 
   if ($self->program) {
     $self->read_from_program;
