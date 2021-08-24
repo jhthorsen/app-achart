@@ -6,8 +6,9 @@ use Term::ANSIColor qw(colored);
 use Term::ReadKey ();
 use Time::HiRes qw(sleep);
 
-$ENV{ACHART_COLORS}   = 'green,yellow,magenta,cyan,red';
 $ENV{ACHART_BAR_CHAR} = '∎';
+$ENV{ACHART_COLORS}   = join ',', qw(green yellow magenta cyan red),
+  qw(black-on_green black-on_yellow black-on_magenta black-on_cyan black-on_red);
 
 option bool => time     => 'Use --no-time to avoid time coloumn', 1;
 option bool => total    => 'Print total as well',                 0;
