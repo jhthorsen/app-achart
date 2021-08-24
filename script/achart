@@ -9,7 +9,8 @@ use Time::HiRes qw(sleep);
 $ENV{ACHART_COLORS}   = 'green,yellow,magenta,cyan,red';
 $ENV{ACHART_BAR_CHAR} = '∎';
 
-option bool => total    => 'Print total as well', 0;
+option bool => time     => 'Use --no-time to avoid time coloumn', 1;
+option bool => total    => 'Print total as well',                 0;
 option str  => program  => 'Run a program that print stats to STDOUT';
 option int  => interval => 'Run the program every $interval seconds', 1;
 option int  => max      => 'Max expected value';
@@ -49,6 +50,9 @@ sub print_stats {
 
   warn "! Adjusting --max to $self->{max}\n" if $adjusted and $self->{initialized};
 
+  my $time = $self->time ? sprintf '%02s:%02s:%02s', (localtime)[2, 1, 0] : '';
+  $len{time} = $time ? 9 : 0;
+
   my $l = length $self->max;
   $len{value} = $l if $l > $len{value};
 
@@ -63,9 +67,9 @@ sub print_stats {
 
     # "10+1       2+1 21                   13           "
     # "some_label  42 ∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎             "
-    my $line = sprintf "%-$len{label}s %$len{value}s %s%s", $label, $stats->{$label},
-      ($ENV{ACHART_BAR_CHAR} x $bar_len),
-      (' ' x ($self->width - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
+    my $line = sprintf "%-$len{time}s%-$len{label}s %$len{value}s %s%s", $time, $label,
+      $stats->{$label}, ($ENV{ACHART_BAR_CHAR} x $bar_len),
+      (' ' x ($self->width - ($len{time}) - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
 
     my $color = $self->colors->[$n_lines++ % $self->n_colors];
     print {$self->out_fh} colored("$line", @$color), "\n";
