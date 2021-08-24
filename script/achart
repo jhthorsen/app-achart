@@ -6,13 +6,13 @@ use Term::ANSIColor qw(colored);
 use Term::ReadKey ();
 use Time::HiRes qw(sleep);
 
-$ENV{ACHART_COLORS} = 'green,yellow,magenta,cyan,red';
+$ENV{ACHART_COLORS}   = 'green,yellow,magenta,cyan,red';
+$ENV{ACHART_BAR_CHAR} = '∎';
 
 option bool => total    => 'Print total as well', 0;
 option str  => program  => 'Run a program that print stats to STDOUT';
 option int  => interval => 'Run the program every $interval seconds', 1;
-option int  => max      => 'Max expected value',                      0;
-option str  => bar_char => 'Bar character',                           '∎';
+option int  => max      => 'Max expected value';
 
 documentation __FILE__;
 version 'App::achart';
@@ -28,24 +28,12 @@ sub height   { $_[0]->{height} ||= $ENV{ROWS}    || 40 }
 sub width    { $_[0]->{width}  ||= $ENV{COLUMNS} || 80 }
 
 # Methods
-sub detect {
-  my ($self, $stats) = @_;
-
-  unless ($self->max) {
-    $self->{max}
-      = $self->total ? 1.5 * List::Util::sum(values %$stats) : 2 * List::Util::max(values %$stats);
-  }
-
-  return ($self->{detected} = 1);
-}
-
 sub print_stats {
   my ($self, $stats) = @_;
-  return if !$self->{detected} and !$self->detect($stats);
-
   $stats->{total} = List::Util::sum(values %$stats) if $self->total;
 
   my %len = (label => 0, value => 0);
+  my $adjusted;
   for my $label (keys %$stats) {
     my $l = length $label;
     $len{label} = $l if $l > $len{label};
@@ -53,11 +41,13 @@ sub print_stats {
     $l = length $stats->{$label};
     $len{value} = $l if $l > $len{value};
 
-    if ($stats->{$label} > $self->max) {
-      $self->{max} = int $stats->{$label} * 1.5;
-      warn "! Adjusting max to $self->{max}\n";
+    if ($stats->{$label} > ($self->max // 0)) {
+      $self->{max} = $self->total ? 1.5 * $stats->{$label} : 2 * $stats->{$label};
+      $adjusted++;
     }
   }
+
+  warn "! Adjusting --max to $self->{max}\n" if $adjusted and $self->{initialized};
 
   my $l = length $self->max;
   $len{value} = $l if $l > $len{value};
@@ -74,12 +64,14 @@ sub print_stats {
     # "10+1       2+1 21                   13           "
     # "some_label  42 ∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎             "
     my $line = sprintf "%-$len{label}s %$len{value}s %s%s", $label, $stats->{$label},
-      ($self->bar_char x $bar_len),
+      ($ENV{ACHART_BAR_CHAR} x $bar_len),
       (' ' x ($self->width - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
 
     my $color = $self->colors->[$n_lines++ % $self->n_colors];
     print {$self->out_fh} colored("$line", @$color), "\n";
   }
+
+  $self->{initialized}++;
 }
 
 sub read_from_program {
@@ -109,6 +101,7 @@ sub text_to_stats {
 app {
   my ($self) = @_;
   @$self{qw(width height)} = Term::ReadKey::GetTerminalSize($self->out_fh);
+  $self->{initialized} = 1 if defined $self->max;
 
   if ($self->program) {
     $self->read_from_program;
