@@ -29,19 +29,17 @@ sub out_fh   { $_[0]->{out_fh}   //= \*STDOUT }
 sub height   { $_[0]->{height} ||= $ENV{ROWS}    || 40 }
 sub width    { $_[0]->{width}  ||= $ENV{COLUMNS} || 80 }
 
-# Methods
-sub print_stats {
+sub calculate_col_width {
   my ($self, $stats) = @_;
-  $stats->{total} = List::Util::sum(values %$stats) if $self->total;
+  my %cols = (label => 0, time => 0, value => 0);
 
-  my %len = (label => 0, value => 0);
   my $adjusted;
   for my $label (keys %$stats) {
     my $l = length $label;
-    $len{label} = $l if $l > $len{label};
+    $cols{label} = $l if $l > $cols{label};
 
     $l = length $stats->{$label};
-    $len{value} = $l if $l > $len{value};
+    $cols{value} = $l if $l > $cols{value};
 
     if ($stats->{$label} > ($self->max // 0)) {
       $self->{max} = $self->total ? 1.5 * $stats->{$label} : 2 * $stats->{$label};
@@ -49,28 +47,38 @@ sub print_stats {
     }
   }
 
+  my $l = length $self->max;
+  $cols{value} = $l if $l > $cols{value};
+  $cols{time}  = 9  if $self->time;
+
   warn "! Adjusting --max to $self->{max}\n" if $adjusted and $self->{initialized};
 
-  my $time = $self->time ? sprintf '%02s:%02s:%02s', (localtime)[2, 1, 0] : '';
-  $len{time} = $time ? 9 : 0;
+  return \%cols;
+}
 
-  my $l = length $self->max;
-  $len{value} = $l if $l > $len{value};
+# Methods
+sub print_stats {
+  my ($self, $stats) = @_;
+  $stats->{total} = List::Util::sum(values %$stats) if $self->total;
 
-  my $width         = $self->width - $len{label} - $len{value} - 6;
+  my $cols         = $self->calculate_col_width($stats);
+  my $time         = $self->time ? sprintf '%02s:%02s:%02s', (localtime)[2, 1, 0] : '';
+  my $bar_width    = $self->width - $cols->{label} - $cols->{value} - 6;
+  my $gutter_width = $cols->{time} + $cols->{label} + 1 + $cols->{value} + 1;
+  my $n_lines      = 0;
+
   my @sorted_labels = grep { !$self->total || $_ ne 'total' } sort keys %$stats;
-  my $n_colors      = @{$self->colors};
-  my $n_lines       = 0;
   push @sorted_labels, 'total' if $self->total;
+
   for my $label (@sorted_labels) {
-    my $bar_len = int($width * $stats->{$label} / $self->max);
-    $bar_len = $width if $width < $bar_len;
+    my $bar_len = int($bar_width * $stats->{$label} / $self->max);
+    $bar_len = $bar_width if $bar_width < $bar_len;
 
     # "10+1       2+1 21                   13           "
     # "some_label  42 ∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎∎             "
-    my $line = sprintf "%-$len{time}s%-$len{label}s %$len{value}s %s%s", $time, $label,
+    my $line = sprintf "%-$cols->{time}s%-$cols->{label}s %$cols->{value}s %s%s", $time, $label,
       $stats->{$label}, ($ENV{ACHART_BAR_CHAR} x $bar_len),
-      (' ' x ($self->width - ($len{time}) - ($len{label} + 1) - ($len{value} + 1) - $bar_len));
+      (' ' x ($self->width - $gutter_width - $bar_len));
 
     my $color = $self->colors->[$n_lines++ % $self->n_colors];
     print {$self->out_fh} colored("$line", @$color), "\n";
